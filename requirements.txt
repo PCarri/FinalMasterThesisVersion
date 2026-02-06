@@ -1,9 +1,5 @@
-streamlit
+﻿streamlit
 numpy
 pandas
 matplotlib
-seaborn
 scipy
-yfinance
-scikit-learn
-transformers
