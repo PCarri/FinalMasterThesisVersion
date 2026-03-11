@@ -50,8 +50,8 @@ pytest
 - Results are sensitive to parameter choices and correlation inputs.
 
 **Thesis and Figures**
-- Place the thesis PDF at `docs/thesis.pdf`.
-- Add any screenshots or figures under `docs/figures/`.
+- PDF at `docs/thesis.pdf`.
+- figures under `docs/figures/`.
 
 **License**
 MIT License. See `LICENSE`.
