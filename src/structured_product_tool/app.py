@@ -15,6 +15,7 @@ from .products import (
     payoff_curve_vs_basket,
     structured_product_terminal_values,
 )
+from .risk_ccr_csa import StructuredProductMTMEngine, CCRMetricsEngine, CSAEngine
 from .simulation import simulate_equities_and_fx
 
 mpl.rcParams["font.family"] = "serif"
@@ -239,6 +240,17 @@ def main():
     rr_call = st.sidebar.slider("Risk reversal call moneyness (Kc/B0)", 1.00, 1.30, 1.05, 0.01)
     rr_put = st.sidebar.slider("Risk reversal put moneyness (Kp/B0)", 0.70, 1.00, 0.95, 0.01)
 
+    st.sidebar.markdown("## CCR / CSA Risk inputs")
+    enable_csa = st.sidebar.checkbox("Enable CSA", value=False)
+    threshold_pct = st.sidebar.slider("Threshold H (% of notional)", 0.0, 100.0, 0.0, 1.0)
+    mta_pct = st.sidebar.slider("MTA (% of Threshold)", 0.0, 100.0, 0.0, 1.0)
+    margin_freq = st.sidebar.selectbox(
+        "Margin frequency (grid)",
+        ["Every grid point", "Every 5 grid points"],
+        index=0,
+    )
+    n_grid_points = st.sidebar.slider("CCR/CSA grid points", 5, 120, 30, 1)
+
     st.header("Structured products (option on basket via moment matching)")
     st.info(
         "Buy & Hold always includes stochastic FX in domestic valuation. "
@@ -306,6 +318,100 @@ def main():
                 f"alpha (<=1): {details['alpha']:.4f} | "
                 f"Cash at T from leftover: {details['cash_T']:,.2f}"
             )
+
+    st.markdown("---")
+
+    st.header("CCR / CSA Risk")
+    strategy_sel = st.selectbox("Strategy", STRATEGIES, index=0)
+    perspective = st.radio("Exposure perspective", ["Investor", "Issuer"], index=0, horizontal=True)
+
+    try:
+        mtm_engine = StructuredProductMTMEngine(
+            investment_amount=investment_amount,
+            protection_pct=protection_pct,
+            basket_composition=basket_composition,
+            weights_vector=weights_vector,
+            params=params,
+            fx_mode_sp=fx_mode_sp,
+            T=T,
+            factors=factors,
+            C_factors=C_used,
+            call_up=call_up,
+            spread_up=spread_up,
+            rr_call=rr_call,
+            rr_put=rr_put,
+        )
+
+        time_grid, V_paths_by_strat = mtm_engine.mtm_paths(
+            time=time,
+            S_paths=S_paths,
+            X_paths=X_paths,
+            n_grid_points=n_grid_points,
+        )
+        V_paths_sel = V_paths_by_strat[strategy_sel]
+
+        ccr_engine = CCRMetricsEngine()
+        ccr = ccr_engine.metrics(V_paths_sel, perspective=perspective)
+
+        df_ccr = pd.DataFrame(
+            {
+                "EE": ccr["EE_pos"],
+                "PFE95": ccr["PFE95_pos"],
+                "PFE99": ccr["PFE99_pos"],
+            },
+            index=time_grid,
+        )
+        st.subheader("Positive Exposure (EE/PFE)")
+        st.line_chart(df_ccr, height=320)
+
+        df_ccr_neg = pd.DataFrame(
+            {
+                "EE": ccr["EE_neg"],
+                "PFE95": ccr["PFE95_neg"],
+                "PFE99": ccr["PFE99_neg"],
+            },
+            index=time_grid,
+        )
+        st.subheader("Negative Exposure (EE/PFE)")
+        st.line_chart(df_ccr_neg, height=320)
+
+        if enable_csa:
+            csa_engine = CSAEngine(
+                enable=enable_csa,
+                threshold_pct=threshold_pct,
+                mta_pct=mta_pct,
+                frequency=margin_freq,
+                notional=investment_amount,
+            )
+            csa_results = csa_engine.collateral_and_net_exposure(ccr["V_adj"], time_grid)
+            csa_pos = csa_engine.metrics(csa_results["E_net_pos"])
+
+            df_csa = pd.DataFrame(
+                {
+                    "EE_net_pos": csa_pos["EE"],
+                    "PFE95_net_pos": csa_pos["PFE95"],
+                    "PFE99_net_pos": csa_pos["PFE99"],
+                },
+                index=time_grid,
+            )
+            st.subheader("CSA Net Positive Exposure")
+            st.line_chart(df_csa, height=320)
+
+            csa_neg = csa_engine.metrics(csa_results["E_net_neg"])
+            df_csa_neg = pd.DataFrame(
+                {
+                    "EE_net_neg": csa_neg["EE"],
+                    "PFE95_net_neg": csa_neg["PFE95"],
+                    "PFE99_net_neg": csa_neg["PFE99"],
+                },
+                index=time_grid,
+            )
+            st.subheader("CSA Net Negative Exposure")
+            st.line_chart(df_csa_neg, height=320)
+        else:
+            st.caption("CSA disabled.")
+    except ValueError as exc:
+        st.error(str(exc))
 
 
 if __name__ == "__main__":
